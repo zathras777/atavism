@@ -9,36 +9,37 @@ _**atavism** - an evolutionary throwback._
 
 The output is simple :-)
 
-> Looking for airplay devices...
->
->     Found Apple TV [AppleTV3,2]  1920x1080 @ 192.168.xxxxxxx:7000
->
->  Search complete.
->
-> Creating the HLS stream...
->     done
-> HLS stream created: 4 segments...
->
->    Playback: [#####                                             ] 11.081%
->    Playback: [########                                          ] 16.117%
->    Playback: [##########                                        ] 21.151%
->    Playback: [#############                                     ] 26.690%
->    Playback: [###############                                   ] 31.725%
->    Playback: [##################                                ] 36.760%
->    Playback: [####################                              ] 41.796%
->    Playback: [#######################                           ] 46.834%
->    Playback: [#########################                         ] 51.866%
->    Playback: [############################                      ] 56.904%
->    Playback: [##############################                    ] 61.937%
->    Playback: [#################################                 ] 66.972%
->    Playback: [####################################              ] 72.007%
->    Playback: [######################################            ] 77.043%
->    Playback: [#########################################         ] 82.078%
->    Playback: [###########################################       ] 87.113%
->    Playback: [##############################################    ] 92.148%
->    Playback: [################################################  ] 97.183%
->    Playback: [ Completed                                        ] 100.000%
->
+```
+ Looking for airplay devices...
+
+     Found Apple TV [AppleTV3,2]  1920x1080 @ 192.168.xxxxxxx:7000
+
+ Search complete.
+
+ Creating the HLS stream...
+     done
+ HLS stream created: 4 segments...
+
+    Playback: [#####                                             ] 11.081%
+    Playback: [########                                          ] 16.117%
+    Playback: [##########                                        ] 21.151%
+    Playback: [#############                                     ] 26.690%
+    Playback: [###############                                   ] 31.725%
+    Playback: [##################                                ] 36.760%
+    Playback: [####################                              ] 41.796%
+    Playback: [#######################                           ] 46.834%
+    Playback: [#########################                         ] 51.866%
+    Playback: [############################                      ] 56.904%
+    Playback: [##############################                    ] 61.937%
+    Playback: [#################################                 ] 66.972%
+    Playback: [####################################              ] 72.007%
+    Playback: [######################################            ] 77.043%
+    Playback: [#########################################         ] 82.078%
+    Playback: [###########################################       ] 87.113%
+    Playback: [##############################################    ] 92.148%
+    Playback: [################################################  ] 97.183%
+    Playback: [ Completed                                        ] 100.000%
+```
 
 This will look for ffmpeg and an AppleTV. Finding both it will create an HLS stream and then send it to the AppleTV.
 
