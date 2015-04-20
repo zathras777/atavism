@@ -34,5 +34,5 @@ setup(
     entry_points={
         'console_scripts': ['atavism=atavism.command_line:main']
     },
-    download_url = 'https://github.com/zathras777/atavism/tarball/0.1',
+    download_url = 'https://github.com/zathras777/atavism/tarball/0.1.1',
 )
