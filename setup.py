@@ -33,5 +33,6 @@ setup(
     test_suite='tests',
     entry_points={
         'console_scripts': ['atavism=atavism.command_line:main']
-    }
+    },
+    download_url = 'https://github.com/zathras777/atavism/tarball/0.1',
 )
