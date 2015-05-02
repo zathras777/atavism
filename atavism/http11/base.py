@@ -52,7 +52,7 @@ class BaseHttp(object):
         data += self._content.next(len(data))
         return data
 
-    # Ranges
+    ### Ranges
     def parse_ranges(self, key):
         """ Parse a range request into individual byte ranges. """
         self.ranges = []
@@ -99,15 +99,19 @@ class BaseHttp(object):
 
     def _update_content(self):
         self._content.content_type = self.header.get('content-type')
-        self._content.content_length = self.header.get('content-length')
+        te = self.get('transfer-encoding')
+        cl = self.get('content-length')
+        # Set how we will detect the length of content...
+        if te is not None and te.lower() == 'chunked':
+            self._content.content_sz = 'chunked'
+        elif cl is not None:
+            self._content.content_sz = cl
+        else:
+            self._content.content_sz = None
 
         rngs = self.get('range')
         if rngs is not None:
             self.parse_ranges('range')
-
-        te = self.get('transfer-encoding')
-        if te is not None and te.lower() == 'chunked':
-            self._content.chunked = True
 
         ce = self.get('content-encoding')
         if ce is not None and ce.lower() != 'identity':

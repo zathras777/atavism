@@ -59,7 +59,10 @@ class Headers(object):
 #            print(":: {}".format(line))
             if b':' in line:
                 key, value = line.split(b':', 1)
-                self.headers[key.decode()] = value.strip().decode()
+                if key.decode().lower() == 'set-cookie':
+                    self.headers.setdefault(key.decode(), []).append(value.strip().decode())
+                else:
+                    self.headers[key.decode()] = value.strip().decode()
             else:
                 print("Malformed header line: {}".format(line))
 
@@ -67,7 +70,12 @@ class Headers(object):
         lines = [self.status_line] if self.status_line is not None else []
         self.headers['Date'] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
         for k in sorted(self.headers):
-            lines.append("{}: {}".format(k, self.headers[k]))
+            if not isinstance(self.headers[k], list):
+                lines.append("{}: {}".format(k, self.headers[k]))
+            else:
+                for v in self.headers[k]:
+                    lines.append("{}: {}".format(k, v))
+
         return "\r\n".join(lines) + "\r\n\r\n"
 
     def get(self, key, default=None):
@@ -81,5 +89,7 @@ class Headers(object):
             kk = k if not isinstance(k, bytes) else k.decode()
             if kk.lower() == key.lower():
                 v = self.headers[k]
-                return int(v) if v.isdigit() else v
+                if not isinstance(v, list):
+                    return int(v) if v.isdigit() else v
+                return v
         return default

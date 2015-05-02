@@ -32,19 +32,21 @@ class Content(object):
     RANGE_BOUNDARY = 'One_At_A_Time_Please'
     MAX_SEND = 1500
 
-    def __init__(self, data=None, content_length=None, content_type=None, charset=None):
+    def __init__(self, data=None, content_sz=None, content_type=None, charset=None):
         self._buffer = b''
         self._next = None
 
-        self.chunked = False
         self.compression = False
         self.finished = False
         self.content_type = content_type
-        self.content_length = content_length
+        self.content_sz = content_sz
         self.charset = charset
         self.send_position = 0
 
-        if self.content_length is not None and data is not None:
+        if self.content_sz == 0:
+            self.finished = True
+
+        if self.content_sz is not None and data is not None:
             self.read_content(data)
         elif data is not None:
             self.add_content(data)
@@ -65,11 +67,10 @@ class Content(object):
         return self._buffer.__getitem__(item)
 
     def reset(self):
-        self.chunked = False
         self.compression = None
         self.content_type = None
         self.charset = None
-        self.content_length = 0
+        self.content_sz = None
         self.send_position = 0
         self._buffer = b''
         self._next = None
@@ -114,15 +115,18 @@ class Content(object):
         """
         if self._next is not None:
             return self._next.read_content(cntnt)
-
         consumed = 0
-        if self.chunked:
+        if self.finished:
+            return consumed
+
+        if self.content_sz == 'chunked':
             if self.CRLF not in cntnt:
                 return 0
             pos = 0
             while True:
                 if self.CRLF not in cntnt[pos:]:
                     return pos
+
                 chunk_len, ignored = cntnt[pos:].split(self.CRLF, 1)
                 cr = len(chunk_len) + 2
                 chunk_len = int(chunk_len, 16)
@@ -134,17 +138,22 @@ class Content(object):
                     if chunk_len > 0:
                         self._buffer += cntnt[pos:pos + chunk_len]
                     pos += chunk_len + 2
+                    consumed = pos
+
                 if chunk_len == 0:
                     self.finished = True
                     consumed = pos
                     break
-        elif self.content_length is None or self.content_length == 0:
-            self.finished = True
+
+        elif self.content_sz is None:
+            self._buffer += cntnt
+            consumed = len(cntnt)
         else:
-            consumed = min(self.content_length - len(self), len(cntnt))
+            consumed = min(self.content_sz - len(self), len(cntnt))
             self._buffer += cntnt[:consumed]
-            if self.content_length == len(self):
+            if self.content_sz == len(self):
                 self.finished = True
+
         if self.finished:
             self.decompress()
         return consumed
@@ -228,7 +237,7 @@ class Content(object):
                 rv['Content-Type'] = self.content_type
             else:
                 rv['Content-Type'] = '{}; charset={}'.format(self.content_type, self.charset)
-        if self.chunked:
+        if self.content_sz == 'chunked':
             rv["Transfer-Encoding"] = "chunked"
         elif len(self):
             rv["Content-Length"] = "{}".format(len(self))
@@ -244,11 +253,11 @@ class Content(object):
             self.finished = True
             return b''
         avail = max(self.MAX_SEND - pkt_len, len(self) - self.send_position)
-        if self.chunked:
+        if self.content_sz == 'chunked':
             avail -= 8
         rv = self[self.send_position: self.send_position + avail]
         self.send_position += len(rv)
-        if self.chunked:
+        if self.content_sz == 'chunked':
             return "{:4X}\r\n{}\r\n".format(len(rv), rv)
         return rv
 
@@ -303,7 +312,7 @@ class FileContent(Content):
         if not os.path.exists(filename):
             return
         self.exists = True
-        self.content_length = os.path.getsize(filename)
+        self.content_sz = os.path.getsize(filename)
         self.content_type, ignored = mimetypes.guess_type(filename)
 
     def __del__(self):
@@ -314,7 +323,7 @@ class FileContent(Content):
         if self._next is not None:
             return len(self._next)
         if self.exists:
-            return self.content_length
+            return self.content_sz
         return len(self._buffer)
 
     def _open(self):

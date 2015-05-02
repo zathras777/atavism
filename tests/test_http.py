@@ -1,7 +1,10 @@
 import os
 import unittest
+from datetime import datetime
+
 from atavism.http11.client import HttpClient
 from atavism.http11.content import Content, FileContent
+from atavism.http11.cookies import CookieJar
 from atavism.http11.headers import Headers
 from atavism.http11.objects import HttpRequest
 
@@ -55,11 +58,13 @@ class TestContent(unittest.TestCase):
         ct = Content()
         self.assertFalse(ct.finished)
         self.assertIsNone(ct.content_type)
-        self.assertIsNone(ct.content_length)
+        self.assertIsNone(ct.content_sz)
 
-        ct2 = Content(content_length=12, content_type='text/plain')
+        ct2 = Content(content_sz=12, content_type='text/plain')
         self.assertFalse(ct2.finished)
-        self.assertEqual(ct2.content_length, 12)
+        self.assertEqual(ct2.content_sz, 12)
+        self.assertEqual(ct2.read_content("123456789012"), 12)
+        self.assertTrue(ct2.finished)
 
     def test_002(self):
         cases = [
@@ -67,7 +72,7 @@ class TestContent(unittest.TestCase):
             ([b'{"origin"', b': "127.0.0.1"}'], 23, 'application/json', {'origin': '127.0.0.1'}),
         ]
         for c in cases:
-            ct = Content(data=c[0][0], content_length=c[1], content_type=c[2])
+            ct = Content(data=c[0][0], content_sz=c[1], content_type=c[2])
             self.assertEqual(ct.finished, True if len(c[0]) == 1 else False)
             self.assertEqual(len(ct), len(c[0][0]))
             for n in range(1, len(c[0])):
@@ -100,6 +105,31 @@ class TestFileContent(unittest.TestCase):
         self.assertEqual(os.path.getsize(fn), 12)
 
 
+class TestCookies(unittest.TestCase):
+    def test_001(self):
+        cj = CookieJar()
+        cases = [
+            {'header': 'abc=123; Path=/', 'qty': 1},
+            {'header': 'def=456', 'qty': 2},
+            {'header': 'def=', 'qty': 2}
+        ]
+        for c in cases:
+            cj.parse_set_cookie(c['header'])
+            self.assertEqual(len(cj), c['qty'])
+
+#        Wed, 20-Apr-2016 18:51:30 GMT
+
+    def test_002(self):
+        ckstr = 'WWWUUU=NS=1&UID=XXXXXXXXXXDE89AA; expires=Wed, 20-Apr-2016 18:51:30 GMT; path=/ABC/'
+        cj = CookieJar()
+        cj.parse_set_cookie(ckstr)
+        self.assertEqual(len(cj), 1)
+        self.assertEqual(cj['WWWUUU'], 'NS=1&UID=XXXXXXXXXXDE89AA')
+        c = cj.get_cookie('WWWUUU')
+        self.assertIsNotNone(c)
+        self.assertEqual(c.expires, datetime(2016, 4, 20, 18, 51, 30))
+
+
 class HttpbinTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -118,7 +148,7 @@ class HttpbinTest(unittest.TestCase):
         self.assertEqual(hdrs['headers']['User-Agent'], 'Test/0.1')
 
     def test_003_post(self):
-        resp = self.http.post_data('/post', {'a': 1, 'b': 2})
+        resp = self.http.post_data('/post', data={'a': 1, 'b': 2})
         self.assertEqual(resp.code, 200)
         self.assertEqual(resp.get('content-type'), 'application/json')
         json_data = resp.decoded_content()
@@ -138,7 +168,7 @@ class HttpbinTest(unittest.TestCase):
         self.assertEqual(type(data), dict)
         self.assertIn('gzipped', data)
         self.assertTrue(data["gzipped"])
-        self.assertNotEqual(gzip._content.content_length, len(gzip._content))
+        self.assertNotEqual(gzip._content.content_sz, len(gzip._content))
 
     def test_006_deflate(self):
         obj = self.http.request('/deflate')
@@ -146,12 +176,21 @@ class HttpbinTest(unittest.TestCase):
         self.assertEqual(type(data), dict)
         self.assertIn('deflated', data)
         self.assertTrue(data["deflated"])
-        self.assertNotEqual(obj._content.content_length, len(obj._content))
+        self.assertNotEqual(obj._content.content_sz, len(obj._content))
 
     def test_007_drip(self):
         resp = self.http.request('/drip', {'numbytes': 1500,'duration': 5, 'code': 200})
         self.assertEqual(resp.code, 200)
         self.assertEqual(len(resp), 1500)
+
+    def test_008_cookies(self):
+        resp = self.http.request('/cookies/set', {'abc': 123, 'def': 456})
+        self.assertEqual(resp.code, 302, "Incorrect response:\n{}".format(resp.content))
+        self.assertEqual(len(resp.get('set-cookie')), 2)
+
+        req = self.http.create_request('/cookies')
+        self.assertEqual(len(req.get('cookie')), 16)
+        self.assertEqual(req.get('cookie'), 'abc=123; def=456')
 
 
 class RangeRequestTest(unittest.TestCase):

@@ -11,6 +11,7 @@ except ImportError:
 
 from atavism import __version__
 from atavism.http11.objects import HttpRequest, HttpResponse
+from atavism.http11.cookies import CookieJar
 
 
 class HttpClientError(Exception):
@@ -28,6 +29,7 @@ class HttpClient(object):
         self.port = port
         self.socket = None
 
+        self.cookies = CookieJar()
         self.user_agent = 'atavism/{}'.format(__version__)
 
         self.timeout = self.TIMEOUT
@@ -43,6 +45,9 @@ class HttpClient(object):
         if self.port == 80:
             return self.host
         return "{}:{}".format(self.host, self.port)
+
+#    def add_cookie(self, key, value, path='/'):
+#        self.cookies.set_cookie(key, value, path)
 
     def verify(self):
         """ Verify that the client is able to establish a connection to the server.
@@ -74,9 +79,9 @@ class HttpClient(object):
         return True
 
     def request(self, uri, qry=None):
-        return self._make_send_request('GET', self._make_url(uri, qry))
+        return self._make_send_request('GET', uri, qry=qry)
 
-    def post_data(self, uri, data=None, ct=None):
+    def post_data(self, uri, qry=None, data=None, ct=None):
         """ Submit a POST request with the supplied data. """
         if ct is None and data is not None and len(data) > 0:
             ct = 'application/x-www-form-urlencoded'
@@ -86,7 +91,7 @@ class HttpClient(object):
                 data = "\r\n".join("{}: {}".format(k, data[k]) for k in data) + "\r\n"
             elif isinstance(data, dict):
                 data = urlencode(data).encode()
-        return self._make_send_request('POST', uri, data, hdrs)
+        return self._make_send_request('POST', uri, qry=qry, data=data, hdrs=hdrs)
 
     def _make_url(self, path, query=None):
         if path is None or len(path) == 0:
@@ -102,9 +107,16 @@ class HttpClient(object):
             return path + '?' + query
         return path
 
-    def _make_send_request(self, method, uri='/', data=None, hdrs=None):
-        req = HttpRequest(method=method, path=uri)
+    def create_request(self, method, uri='/', qry=None, hdrs=None):
+        req = HttpRequest(method=method, path=self._make_url(uri, qry))
         req.add_headers(hdrs or {})
+        cookies = self.cookies.get_cookies(uri)
+        if cookies is not None:
+            req.add_header('Cookie', cookies)
+        return req
+
+    def _make_send_request(self, method, uri='/', qry=None, data=None, hdrs=None):
+        req = self.create_request(method, uri, qry=qry, hdrs=hdrs)
         if data is not None:
             req.add_content(data)
         return self.send_request(req)
@@ -115,7 +127,7 @@ class HttpClient(object):
             return None
 
         request.add_headers({'Host': self.host_str(),
-                             'Accept-Encoding': 'identity, gzip'})
+                             'Accept-Encoding': 'identity'}) #, gzip'})
         if self.user_agent:
             request.add_header('User-Agent', self.user_agent)
         request.complete()
@@ -184,13 +196,18 @@ class HttpClient(object):
             if len(r):
                 data = self.socket.recv(2048)
                 if len(data) == 0:
+                    response.mark_complete()
                     break
                 self._buffer += data
 #                print(self._buffer)
                 r = response.read_content(self._buffer)
                 self._buffer = self._buffer[r:]
 
+            if response.is_complete():
+                break
+
         if response.is_complete():
+            self.cookies.check_cookies(response)
             if response.close_connection:
                 self._close_socket()
             return response

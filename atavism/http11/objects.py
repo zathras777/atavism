@@ -34,6 +34,8 @@ class HttpRequest(BaseHttp):
         if len(self.ranges) > 0:
             self.add_header('Range', 'bytes={}'.format(','.join([r.header() for r in self.ranges])))
         self.header.status_line = '{} {} {}'.format(self.method.upper(), self.path, self.http)
+#        if len(self._content) > 512:
+#            self._content.content_sz = 'chunked'
         self._complete()
 
     def make_response(self):
@@ -98,6 +100,10 @@ class HttpResponse(BaseHttp):
             self.ranges = []
         elif code == 206 and len(self.ranges) == 0:
             self.code = 200
+
+    def mark_complete(self):
+        self._content.finished = True
+        self._content.decompress()
 
     def complete(self):
         if len(self.ranges) > 0:

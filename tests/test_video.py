@@ -27,7 +27,6 @@ class TestDNS(unittest.TestCase):
     def setUpClass(cls):
         """ Use the sample video @ http://cdn.clipcanvas.com/sample/clipcanvas_14348_offline.mp4
         """
-#        cls.http = None
         for sv in cls.SAMPLE_VIDEOS:
             if not os.path.exists(sv['filename']):
                 print("Downloading sample video from {}. Please be patient...".format(sv['host']))
@@ -40,7 +39,6 @@ class TestDNS(unittest.TestCase):
                         pass
                 else:
                     print("Unable to connect to {}".format(sv['host']))
-                http.stop()
 
     def test_001_hls(self):
         h = HLSVideo(self.SAMPLE_VIDEOS[0]['filename'])
