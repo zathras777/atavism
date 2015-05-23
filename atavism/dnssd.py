@@ -387,16 +387,18 @@ class MDNSServiceDiscovery(object):
     IP6_MULTICAST = ipaddress.IPv6Address(u'FF02::FB')
     MULTICAST_PORT = 5353
 
-    def __init__(self, qname=None, qtype=QTYPE_ALL):
+    def __init__(self, *args, **kwargs):
         self.ip_version = 4
         self.ttl = 2
         self.timeout = 10
         self.devices = {}
+        self.qtype = kwargs.get('qtype', QTYPE_ALL)
 
         self.interface = self.find_interfaces()
         self.query = MDNSQuery()
-        if qname is not None:
-            self.query.add_question(qname.strip(), qtype)
+
+        for qname in args:
+            self.query.add_question(qname.strip(), self.qtype)
 
     def find_interfaces(self):
         """ Find the local interface(s) that we will send via.
