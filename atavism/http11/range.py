@@ -53,12 +53,12 @@ class Range(object):
             if self.end < 0:
                 return clen + self.end, clen - 1
             start = 0
-        end = clen
+        end = clen - 1
         if self.end is not None:
             if self.end < 0:
                 end = clen + self.end - 1
             else:
-                end = self.end
+                end = self.end - 1
         if end < start:
             end = start
         return start, end
