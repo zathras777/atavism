@@ -15,7 +15,6 @@ class AirplayDeviceError(Exception):
 
 
 def show_progress(current, duration):
-    print(current, duration)
     interval = 2
     if current > 0:
         n = (current / duration) * 100
