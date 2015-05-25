@@ -14,6 +14,12 @@ class Headers(object):
     def __len__(self):
         return len(self.buffer)
 
+    @property
+    def needs_content(self):
+        if self.get('content-length') is None and self.get('content-type') is None:
+            return False
+        return True
+
     def read_content(self, cntnt):
         """ Read data from a stream until we have a complete set of headers.
         :param cntnt: Stream data to read.

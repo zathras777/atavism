@@ -1,4 +1,5 @@
 from _socket import SHUT_RD, SHUT_RDWR
+import logging
 import socket
 import threading
 import select
@@ -19,7 +20,7 @@ class HttpServer(object):
         self.running = False
         self.accept_thread = None
         self.connections = []
-
+        self.logger = logging.getLogger()
         self.host = host
         self.port = port
 
@@ -47,6 +48,7 @@ class HttpServer(object):
             raise HttpServerError("Unable to open a socket for {}:{}".format(self.host, self.port))
 
     def start(self):
+        self.logger.info("HttpServer starting up")
         if self.socket is None:
             self.make_socket()
             if self.socket is None:
@@ -57,10 +59,10 @@ class HttpServer(object):
         self.accept_thread.start()
 
     def stop(self):
-        if self.socket is not None:
-            self.socket.shutdown(SHUT_RD)
-            self.socket.close()
-            self.socket = None
+#        if self.socket is not None:
+#            self.socket.shutdown(SHUT_RD)
+#            self.socket.close()
+#            self.socket = None
 
         for c in self.connections:
             c.stop()
@@ -72,8 +74,18 @@ class HttpServer(object):
             except KeyboardInterrupt as e:
                 pass
 
+        if self.socket is not None:
+            self.socket.shutdown(SHUT_RD)
+            self.socket.close()
+            self.socket = None
+
+
+    def join(self):
+        self.accept_thread.join(1.0)
+
     def _accept_loop(self):
         self.make_socket()
+        self.logger.info("Starting accept loop for {}:{}".format(self.host, self.port))
         while self.running:
             r, w, e = select.select([self.socket], [], [self.socket], 5.0)
             if len(e) > 0:
@@ -85,9 +97,12 @@ class HttpServer(object):
                 ns = self.socket.accept()
                 conn = HttpConnection(self, *ns)
                 self.connections.append(conn)
+                self.logger.info("Accepted a connection from %s.", ns)
             except socket.timeout as e:
                 continue
             except (OSError, socket.error, AttributeError):
+                if self.running:
+                    self.logger.warning("Socket error in accept loop :-(")
                 break
 
         self.running = False
@@ -98,6 +113,7 @@ class HttpConnection(object):
         self.parent = parent
         self.socket = sock
         self.address = address
+        self.logger = logging.getLogger()
 
         self.inp = b''
         self.running = True
@@ -112,26 +128,41 @@ class HttpConnection(object):
     def main_loop(self):
         #todo add timeout checking...
         request = None
-
+        self.logger.info("HttpConnection main loop started.")
         while self.running:
             ws = [self.socket] if len(self.responses) > 0 else []
-            r, w, e = select.select([self.socket], ws, [self.socket], 5.0)
+
+            try:
+                r, w, e = select.select([self.socket], ws, [self.socket], 5.0)
+            except:
+                break
 
             if len(e) > 0:
                 break
 
+            resp = self.responses[0] if len(self.responses) > 0 else None
             if len(r) > 0:
-                data = self.socket.recv(2048)
-                if len(data) == 0:
+                try:
+                    data = self.socket.recv(2048)
+                except socket.error as e:
+                    self.logger.warning("Socket error: %s", e)
                     break
 
+                self.logger.debug("Read %d bytes from accepted socket", len(data))
+                if len(data) == 0:
+                    if resp is None or not resp.is_keepalive:
+                        self.logger.debug("Zero byte read, no keepa-live response, closing socket...")
+                        break
+
                 self.inp += data
-#                print(self.inp)
                 if request is None:
                     request = HttpRequest()
 
                 read = request.read_content(self.inp)
                 self.inp = self.inp[read:]
+
+                if request.header.finished:
+                    self.logger.debug(request.header)
 
                 if request.is_complete():
                     resp = self.parent.handler(request)
@@ -139,13 +170,18 @@ class HttpConnection(object):
                     self.responses.append(resp)
                     request = None
 
-            if len(w) > 0 and len(self.responses) > 0:
+            if len(w) > 0 and resp is not None:
                 # only process one response each pass...
-                next = self.responses[0].next_output()
-#                print("Send:\n{}\n".format(next))
-                self.socket.send(next)
-                if self.responses[0].send_complete():
-                    if self.responses[0].close_connection:
+                next = resp.next_output()
+                self.logger.debug("Sending %s bytes", len(next))
+                try:
+                    self.socket.send(next)
+                except socket.error as e:
+                    if self.running:
+                        self.logger.warning("Unable to send via socket. Closing it. %s", e)
+                    break
+                if resp.send_complete():
+                    if not resp.is_keepalive:
                         break
                     self.responses.pop()
 

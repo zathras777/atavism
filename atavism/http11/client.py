@@ -127,7 +127,7 @@ class HttpClient(object):
             return None
 
         request.add_headers({'Host': self.host_str(),
-                             'Accept-Encoding': 'identity'}) #, gzip'})
+                             'Accept-Encoding': 'identity, gzip'})
         if self.user_agent:
             request.add_header('User-Agent', self.user_agent)
         request.complete()
@@ -159,6 +159,7 @@ class HttpClient(object):
     def _close_socket(self):
         if self.socket is not None:
             self.socket.close()
+            self.socket = None
         self._buffer = b''
 
     def _process_request(self, request):
@@ -172,14 +173,22 @@ class HttpClient(object):
 #            print("send({})".format(data))
             if len(data) == 0:
                 break
-            r, w, e = select.select([], [self.socket], [self.socket], self.timeout)
+
+            try:
+                r, w, e = select.select([], [self.socket], [self.socket], self.timeout)
+            except socket.error:
+                print("Select failed for socket - trying to reestablish...")
+                self._close_socket()
+                request.reset()
+                return self._process_request(request)
+
             if len(e) > 0:
                 raise HttpClientError("Socket reported an error.")
             elif len(w) == 0:
                 raise HttpClientError("Socket timed out for write operations. Unable to send request.")
             n = self.socket.send(data)
             if n == 0:
-#               print("Unable to send data")
+                print("Unable to send data")
                 break
 
         if not request.send_complete():
@@ -208,7 +217,7 @@ class HttpClient(object):
 
         if response.is_complete():
             self.cookies.check_cookies(response)
-            if response.close_connection:
+            if not response.is_keepalive:
                 self._close_socket()
             return response
         return None

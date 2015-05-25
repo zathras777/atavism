@@ -30,6 +30,13 @@ class HttpRequest(BaseHttp):
             self.method, self.path, self.http = self.header.status_line.split(' ')
         return rv
 
+    def reset(self):
+        cnt = self._content
+        while cnt._next:
+            cnt = cnt._next
+        cnt.send_position = 0
+        self.headers_sent = False
+
     def complete(self):
         if len(self.ranges) > 0:
             self.add_header('Range', 'bytes={}'.format(','.join([r.header() for r in self.ranges])))
@@ -41,7 +48,7 @@ class HttpRequest(BaseHttp):
     def make_response(self):
         resp = HttpResponse()
 
-        resp.close_connection = self.close_connection
+        resp.add_header('Connection', 'keep-alive' if self.is_keepalive else 'close')
         resp.ranges = self.ranges
 
         if self.method.upper() == b'HEAD':

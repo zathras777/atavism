@@ -17,7 +17,6 @@ class BaseHttp(object):
         self.header = Headers()
         self._content = Content()
 
-        self.close_connection = False
         self.headers_sent = False
         self.headers_only = False
         self.ranges = []
@@ -35,8 +34,15 @@ class BaseHttp(object):
         self.header.add_headers(hdr_dict)
 
     ### Connection Information
+    @property
+    def is_keepalive(self):
+        return False if self.header.get('connection', '').lower() == 'close' else True
+
     def send_complete(self):
-        if self.headers_sent and self._content.finished:
+        ct = self._content
+        while ct._next is not None:
+            ct = ct._next
+        if self.headers_sent and ct.send_complete:
             return True
         return False
 
@@ -88,6 +94,9 @@ class BaseHttp(object):
     def set_content(self, cntnt_obj):
         self._content = cntnt_obj
 
+    def set_content_type(self, ct):
+        self._content.content_type = ct
+
     def read_content(self, cntnt):
         r = 0
         if not self.header.finished:
@@ -117,10 +126,6 @@ class BaseHttp(object):
         if ce is not None and ce.lower() != 'identity':
             self._content.set_compression(ce)
 
-        conn = self.get('connection')
-        if conn is not None and conn.lower() == 'close':
-            self.close_connection = True
-
     def set_compression(self, method):
         self._content.set_compression(method)
 
@@ -136,6 +141,8 @@ class BaseHttp(object):
         """
         if self.header.finished is False:
             return False
+        elif not self.header.needs_content:
+            return True
         return self._content.finished
 
     def add_content(self, cntnt):

@@ -1,5 +1,6 @@
 import gzip
 import json
+from lxml import etree
 import mimetypes
 import os
 import zlib
@@ -30,14 +31,16 @@ class Content(object):
     """
     CRLF = b'\r\n'
     RANGE_BOUNDARY = 'One_At_A_Time_Please'
-    MAX_SEND = 1500
+    MAX_SEND = 2048
 
     def __init__(self, data=None, content_sz=None, content_type=None, charset=None):
         self._buffer = b''
         self._next = None
 
         self.compression = False
+        self.is_compressed = False
         self.finished = False
+        self.send_complete = False
         self.content_type = content_type
         self.content_sz = content_sz
         self.charset = charset
@@ -75,6 +78,7 @@ class Content(object):
         self._buffer = b''
         self._next = None
         self.finished = False
+        self.is_compressed = False
 
     def set_compression(self, method):
         if self._next is not None:
@@ -85,14 +89,20 @@ class Content(object):
     def compress(self):
         if self._next is not None:
             self._next.compress()
+        if self.is_compressed:
+            return
         elif self.compression == 'gzip':
             zbuf = GzipIO()
             zfile = gzip.GzipFile(mode='wb',  fileobj=zbuf, compresslevel=9)
             zfile.write(self._buffer)
             zfile.close()
-            self._add_next(zbuf.getvalue())
+            ct = self._add_next(zbuf.getvalue())
+            ct.is_compressed = True
+            ct.compression = 'gzip'
         elif self.compression == 'deflate':
-            self._add_next(zlib.compress(self._buffer))
+            ct = self._add_next(zlib.compress(self._buffer))
+            ct.is_compressed = True
+            ct.compression = 'deflate'
 
     def decompress(self):
         if self._next is not None:
@@ -144,7 +154,6 @@ class Content(object):
                     self.finished = True
                     consumed = pos
                     break
-
         elif self.content_sz is None:
             self._buffer += cntnt
             consumed = len(cntnt)
@@ -199,6 +208,8 @@ class Content(object):
                 return dd
             elif self.content_type == 'application/json':
                 return json.loads(self._buffer.decode())
+            elif self.content_type == 'application/xml':
+                return etree.fromstring(self._buffer.decode())
             elif self.content_type == 'multipart/byteranges':
                 boundary = self.charset.split('=', 1)[1]
                 start = self._buffer.find(b'--')
@@ -250,9 +261,12 @@ class Content(object):
         if self._next is not None:
             return self._next.next(pkt_len)
         if len(self) == 0:
-            self.finished = True
+            self.send_complete = True
             return b''
-        avail = max(self.MAX_SEND - pkt_len, len(self) - self.send_position)
+        avail = min(self.MAX_SEND - pkt_len, len(self) - self.send_position)
+        if avail == 0:
+            self.send_complete = True
+            return b''
         if self.content_sz == 'chunked':
             avail -= 8
         rv = self[self.send_position: self.send_position + avail]
@@ -301,18 +315,16 @@ class Content(object):
                      content_type=content_type or self.content_type,
                      charset=self.charset)
         self._next = ct
-
+        return ct
 
 class FileContent(Content):
     def __init__(self, filename):
-        Content.__init__(self)
+        Content.__init__(self, content_sz=os.path.getsize(filename))
         self.filename = filename
         self.file_handle = None
-        self.exists = False
-        if not os.path.exists(filename):
+        self.exists = os.path.exists(filename)
+        if not self.exists:
             return
-        self.exists = True
-        self.content_sz = os.path.getsize(filename)
         self.content_type, ignored = mimetypes.guess_type(filename)
 
     def __del__(self):
