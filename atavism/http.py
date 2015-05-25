@@ -1,3 +1,4 @@
+from mimetypes import guess_type
 import random
 import socket
 from atavism.http11.content import FileContent
@@ -19,8 +20,6 @@ class HLSServer(HttpServer):
         HttpServer.__init__(self)
         self.video = video
         self.find_interface()
-        if self.find_interface():
-            self.start()
 
     def make_socket(self):
         failed = []
@@ -40,8 +39,13 @@ class HLSServer(HttpServer):
                 pass
         raise HLSServerError("Unable to fid a suitable open port. Tried {}".format(",".join(failed)))
 
+    @property
     def url(self):
-        return "http://{}:{}{}".format(self.host, self.port, self.video.url())
+        return "http://{}:{}{}".format(self.host, self.port, self.video.url)
+
+    @property
+    def content_type(self):
+        return guess_type(self.video.url)[0]
 
     def find_interface(self):
         """ Find the local interface(s) that we will send via.
@@ -65,6 +69,7 @@ class HLSServer(HttpServer):
         :param request: The HttpRequest object to process.
         :return: The HttpResponse object.
         """
+        self.logger.debug("Processing request for '%s'", request.path)
         resp = request.make_response()
         resp.add_headers({'Accept-Ranges': 'bytes',
                           'Server': 'atavism/{}'.format(__version__)})
@@ -75,7 +80,9 @@ class HLSServer(HttpServer):
 
         rfn = self.video.find_file(request.path)
         if rfn is None:
+            self.logger.info("Failed to find '%s'", request.path)
             resp.set_code(404)
+            resp.set_content_type('text/html')
             resp.add_content("{} does not exist on this server.".format(request.path))
             return resp
 

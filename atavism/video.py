@@ -1,4 +1,5 @@
 from errno import EPERM, EACCES
+from os import path
 import os
 import sys
 import subprocess
@@ -70,73 +71,43 @@ def find_ffmpeg(binary_name='ffmpeg', skip_list=None, paths=None, silent=False):
 
 
 class BaseVideo(object):
-    def __init__(self, source):
+    def __init__(self, source, ffmpeg=None):
         self.source = source
-        self.directory = os.path.dirname(source)
+        self.directory = path.dirname(source)
+        if self.directory.startswith('~'):
+            self.directory = path.expanduser(self.directory)
+        self.directory = path.abspath(self.directory)
+        self.ffmpeg = ffmpeg or find_ffmpeg()
+        self.info = {}
+        self.streams = []
+        self.video_stream = None
+        self.get_video_information()
 
+    @property
     def url(self):
         return "/{}".format(os.path.basename(self.source))
 
     def find_file(self, url):
-        poss_fn = os.path.join(self.directory, url[1:] if url.startswith('/') else url)
+        poss_fn = path.join(self.directory, url[1:] if url.startswith('/') else url)
         if not os.path.exists(poss_fn):
             return None
         return poss_fn
 
-
-class SimpleVideo(BaseVideo):
-    def __init__(self, source):
-        BaseVideo.__init__(self, source)
-
-
-class HLSVideo(BaseVideo):
-    """ We will attempt to create a temporary directory to contain the segments of an HLS
-        stream. The files are removed when the instance that created them is deleted.
-    """
-    def __init__(self, source, tmp_base=None, ffmpeg=None):
-        BaseVideo.__init__(self, source)
-        self.cleanup = True
-        self.fn = os.path.splitext(os.path.basename(source))[0] + '.m3u8'
-        self.directory = mkdtemp(dir=tmp_base or '/tmp')
-        self.hls_filename = os.path.join(self.directory, self.fn)
-        self.ffmpeg = ffmpeg or find_ffmpeg()
-        self.streams = []
-        self.video_stream = None
-        self.meta = {}
-        self.duration_data = {}
-        self.hls_time = 10
-        self.segments = 0
-
-        self.get_video_information()
-
-    def url(self):
-        return "/{}".format(self.fn)
-
-    def __del__(self):
-        if self.cleanup:
-#            print("Removing directory {}".format(self.directory))
-            for f in os.listdir(self.directory):
-                os.unlink(os.path.join(self.directory, f))
-            os.rmdir(self.directory)
-
-    def create_hls(self, max_width=-1, max_height=-1):
-        opts = []
-        if self.needs_resize(max_width, max_height):
-            opts.extend(['-vf', 'scale={}:{}'.format(*self._resized(max_width, max_height))])
-
-        output, err = self._hls_command(opts)
-        self.segments = len(os.listdir(self.directory)) - 1
-        if self.segments > 0:
-            return True
-        print(output)
-        print(err)
-
-        return False
+    def _execute_ffmpeg(self, *args):
+        cmd_args = [self.ffmpeg, '-i', self.source]
+        cmd_args.extend(*args)
+        p = subprocess.Popen(cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return p.communicate()
 
     def get_video_information(self):
         ignored, data = self._execute_ffmpeg([])
         for input in data.split(b'\nInput')[1:]:
             for l in [ln.strip() for ln in input.split(b'\n')]:
+                if l.startswith('Duration'):
+                    dur, ignored = l[10:].split(',', 1)
+                    parts = [float(p) for p in dur.split(':')]
+                    self.info['duration'] = parts[0] * 3600 + parts[1] * 60 + parts[2]
+
                 if not l.startswith(b'Stream'):
                     continue
                 info = re.match(b'^Stream #([0-9]\:[0-9])\(?([A-Za-z]{2,})?\)?: ([A-Za-z]+):', l)
@@ -166,6 +137,52 @@ class HLSVideo(BaseVideo):
         if self.video_stream is None:
             return -1.0
         return float(self.video_stream.get('height', -1))
+
+
+class SimpleVideo(BaseVideo):
+    def __init__(self, source):
+        BaseVideo.__init__(self, source)
+
+
+class HLSVideo(BaseVideo):
+    """ We will attempt to create a temporary directory to contain the segments of an HLS
+        stream. The files are removed when the instance that created them is deleted.
+    """
+    def __init__(self, source, tmp_base=None, ffmpeg=None):
+        BaseVideo.__init__(self, source, ffmpeg)
+        self.cleanup = True
+        self.fn = os.path.splitext(os.path.basename(source))[0] + '.m3u8'
+        self.directory = mkdtemp(dir=tmp_base or '/tmp')
+        self.hls_filename = os.path.join(self.directory, self.fn)
+        self.meta = {}
+        self.duration_data = {}
+        self.hls_time = 10
+        self.segments = 0
+
+    @property
+    def url(self):
+        return "/{}".format(self.fn)
+
+    def __del__(self):
+        if self.cleanup:
+#            print("Removing directory {}".format(self.directory))
+            for f in os.listdir(self.directory):
+                os.unlink(os.path.join(self.directory, f))
+            os.rmdir(self.directory)
+
+    def create_hls(self, max_width=-1, max_height=-1):
+        opts = []
+        if self.needs_resize(max_width, max_height):
+            opts.extend(['-vf', 'scale={}:{}'.format(*self._resized(max_width, max_height))])
+
+        output, err = self._hls_command(opts)
+        self.segments = len(os.listdir(self.directory)) - 1
+        if self.segments > 0:
+            return True
+        print(output)
+        print(err)
+
+        return False
 
     def has_audio(self):
         for s in self.streams:
@@ -200,12 +217,6 @@ class HLSVideo(BaseVideo):
         if h % 2 != 0:
             h -= 1
         return w, h
-
-    def _execute_ffmpeg(self, *args):
-        cmd_args = [self.ffmpeg, '-i', self.source]
-        cmd_args.extend(*args)
-        p = subprocess.Popen(cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return p.communicate()
 
     def _hls_command(self, *opts):
         args = ['-hls_time', str(self.hls_time), '-hls_list_size', '0', '-f', 'hls']

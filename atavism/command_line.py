@@ -1,7 +1,9 @@
 import argparse
+from ipaddress import IPv4Address, ip_address
+import logging
 import os
 import sys
-from atavism.devices import AirplayDevice
+from atavism.devices import AirplayDevice, Chromecast
 from atavism.dnssd import MDNSServiceDiscovery
 from atavism.http import HLSServer
 from atavism.video import find_ffmpeg, HLSVideo, SimpleVideo
@@ -18,6 +20,9 @@ def main():
                         help='Name of ffmpeg binary to use')
     parser.add_argument('--ffmpeg-search-paths', help='Path(s) to search for ffmpeg binary')
     parser.add_argument('--hls-only', action='store_true', help='Just create an HLS stream')
+    parser.add_argument('--chromecast', action='store_true', help='If an IP is supplied, is it for a Chromecast?')
+    parser.add_argument('-v', nargs='*', help='Additional debug information')
+    parser.add_argument('--log', help='Logfile to save output into')
     parser.add_argument('video', nargs='?', help="Video to stream")
 
     args = parser.parse_args()
@@ -34,6 +39,17 @@ def main():
         print("You have used --send-direct and --hls-only. Sadly this app can't do both!")
         sys.exit(0)
 
+    # Setup some simple logging
+    logger = logging.getLogger()
+    if args.v is not None:
+        logger.setLevel(min(10, 30 - len(args.v) * 10))
+    if args.log is not None:
+        fh = logging.FileHandler(args.log)
+        fh.setLevel(logger.level)
+        logger.addHandler(fh)
+    else:
+        logger.addHandler(logging.StreamHandler())
+
     if not args.send_direct and args.find_devices is False:
         ffmpeg = find_ffmpeg(binary_name=args.ffmpeg_binary_name, paths=args.ffmpeg_search_paths)
 
@@ -42,13 +58,18 @@ def main():
 
     if not args.hls_only:
         if args.find_devices is True or args.ip is None:
-            print("Looking for airplay devices...\n")
-            dev_src = MDNSServiceDiscovery('_airplay._tcp.local')
+            print("Looking for devices...\n")
+            dev_src = MDNSServiceDiscovery('_airplay._tcp.local', '_googlecast._tcp.local')
             if not dev_src.find_devices():
                 print("Unable to locate any airplay devices. Exiting...")
                 sys.exit(0)
 
-            devices = [AirplayDevice(dev_src.devices[ptr]) for ptr in dev_src.devices]
+            for ptr in dev_src.devices:
+                if 'airplay' in ptr:
+                    devices.append(AirplayDevice(dev_src.devices[ptr]))
+                elif 'googlecast' in ptr:
+                    devices.append(Chromecast(dev_src.devices[ptr]))
+
             for d in devices:
                 print("    Found {}".format(d))
             print("\n Search complete.\n")
@@ -59,7 +80,10 @@ def main():
                 sys.exit(0)
 
         elif args.ip is not None:
-            devices = [AirplayDevice({'host': args.ip})]
+            if args.chromecast:
+                devices = [Chromecast({'A': ip_address(args.ip.decode())})]
+            else:
+                devices = [AirplayDevice({'A': ip_address(args.ip.decode())})]
 
         if len(devices) > 1:
             print("\nAs more than one device was found, please enter the number of the device to use:")
@@ -85,7 +109,9 @@ def main():
 
         print("HLS stream created: {} segments...".format(video.segments))
     else:
+        print("Getting video information...")
         video = SimpleVideo(args.video)
+        print("    done")
 
     srv = HLSServer(video=video)
     srv.start()

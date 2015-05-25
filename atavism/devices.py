@@ -1,11 +1,34 @@
-from time import sleep
+import logging
+import socket
+import ssl
+from threading import Thread, Event
+from time import sleep, time
 import re
 import math
+from struct import pack
+from atavism.chromecast import ChromecastClient
 from atavism.http11.client import HttpClient
 
 
 class AirplayDeviceError(Exception):
     pass
+
+
+def show_progress(current, duration):
+    print(current, duration)
+    interval = 2
+    if current > 0:
+        n = (current / duration) * 100
+        bar = "#" * int(math.floor(n / 2.0))
+    elif current == duration:
+        bar = ' Completed'
+        n = 100.0
+        interval = 0
+    else:
+        bar = ' Buffering...'
+        n = 0.0
+    print('\r   Playback: [%-50s] %7.03f%%' % (bar, n))
+    return interval
 
 
 class AirplayDevice:
@@ -82,38 +105,25 @@ class AirplayDevice:
     def play_video(self, video_srv):
         self.stop_video()
 
-        pdata = {'Content-Location': video_srv.url(), 'Start-Position': 0}
+        pdata = {'Content-Location': video_srv.url, 'Start-Position': 0}
         resp = self.http.post_data('/play', pdata, 'text/parameters')
         if resp is None or resp.code != 200:
             raise AirplayDeviceError("Unable to play the video.")
 
         # need to pause to allow things to settle...
+        current, duration = self.get_position()
         try:
             sleep(self.UPDATE_INTERVAL)
-            current, duration = self.get_position()
             while duration > 0 and current < duration:
-                try:
-                    current, duration = self.get_position()
-                    interval = self.UPDATE_INTERVAL
-                    if current > 0:
-                        n = (current / duration) * 100
-                        bar = "#" * int(math.floor(n / 2.0))
-                        interval = 2
-                    elif current == 0 and duration == 0:
-                        bar = ' Completed'
-                        n = 100.0
-                    else:
-                        bar = ' Buffering...'
-                        n = 0.0
-                    print('\r   Playback: [%-50s] %.03f%%' % (bar, n))
-                    sleep(interval)
-                except KeyboardInterrupt:
-                    print("\r\nStopping...")
+                current, duration = self.get_position()
+                interval = show_progress(current, duration)
+                if interval == 0:
                     break
-            print('\r\n')
-            sleep(2)
+                sleep(interval)
         except KeyboardInterrupt:
-            print("  Stopping....")
+            print("\r\nStopping...")
+
+        print('\r\n')
         video_srv.stop()
 
     def get_position(self):
@@ -131,3 +141,119 @@ class AirplayDevice:
         if data.code == 200:
             return True
         return False
+
+
+class Chromecast(object):
+    def __init__(self, device=None):
+        if device is None:
+            return
+
+        self.width = 1920
+        self.height = 1080
+
+        self.info = {}
+        self.txt = device.get('TXT')
+        self.output = (-1, -1)
+        self.ptr = device.get('PTR')
+        self.host = device.get('A')
+        self.host6 = device.get('AAAA')
+        srv = device.get('SRV', {})
+        self.port = srv.get('port', 8009)
+        self.name = srv.get('name')
+
+        self.http = HttpClient(self.host, self.port)
+        self.dial = HttpClient(self.host, 8008)
+        if self.ptr is not None:
+            self.get_info()
+
+        self.client = ChromecastClient(self.host, self.port)
+
+    def __str__(self):
+        return "Chromecast: {} @ {}".format(self.name, self.host)
+
+    def get_info(self):
+        UPNP_NS = "{urn:schemas-upnp-org:device-1-0}"
+        xml = self.dial.simple_request('/ssdp/device-desc.xml')
+        if xml is None:
+            return
+
+        def get_xpath(_tree, _node, raw=False):
+            _xpath = './/' + '/'.join(['*[local-name()="{}"]'.format(p) for p in _node.split('/')])
+            matches = _tree.xpath(_xpath)
+            if raw:
+                return matches
+            if len(matches) > 0:
+                return matches[0].text
+            return ''
+
+        info = {}
+        info['URLBase'] = get_xpath(xml, 'URLBase')
+        info['api_version'] = "{}.{}".format(get_xpath(xml, 'specVersion/major'),
+                                             get_xpath(xml, 'specVersion/minor'))
+        info['deviceType'] = get_xpath(xml, 'device/deviceType')
+        info['friendlyName'] = get_xpath(xml, 'device/friendlyName')
+        info['manufacturer'] = get_xpath(xml, 'device/manufacturer')
+        info['modelName'] = get_xpath(xml, 'device/modelName')
+        info['UDN'] = get_xpath(xml, 'device/UDN')
+        self.info = info
+
+        svcs = []
+        for svc in get_xpath(xml, 'serviceList/service', True):
+            vals = ('serviceType', 'serviceId', 'controlURL', 'eventSubURL', 'SCPDURL')
+            svcs.append({k: get_xpath(svc, k) for k in vals})
+        self.services = svcs
+
+    def reboot(self):
+        """ Ask the Chromecast to reboot.
+        :return: None.
+        """
+        self.dial.post_data("/setup/reboot", data='{"params": "now"}', ct='application/json')
+
+    def stop(self):
+        if self.client.running is True:
+            return
+        self.client.stop()
+
+    def stop_video(self):
+        if self.client.running:
+            self.client.stop_apps()
+        return True
+
+    def play_video(self, video_srv):
+        self.client.start()
+        if not self.client.running:
+            return
+
+        ck = self.client.get_app_availability(self.client.DEFAULT_MEDIA_APP)
+        if not ck.get(self.client.DEFAULT_MEDIA_APP, False):
+            return
+        self.client.stop_apps()
+        sess = self.client.launch_app()
+        if sess is None:
+            self.logger.warning("Unable to get a media player session.")
+            video_srv.stop()
+            return
+
+        sess.connect()
+        if not sess.connected:
+            self.logger.warning("Unable to connect to the media player session.")
+            video_srv.stop()
+            return
+        duration = video_srv.video.info.get('duration')
+        ck = sess.load_movie(video_srv.url, video_srv.content_type, duration)
+        if ck:
+            sess.play_media()
+
+        while not sess.media_finished:
+            try:
+                sess.get_media_status()
+                sleep(0.25)
+                if not sess.media_finished:
+                    interval = show_progress(sess.media_position, duration)
+                    sleep(interval)
+            except KeyboardInterrupt:
+                print("\nStopping....\n")
+                break
+
+        print("Finished.")
+        video_srv.stop()
