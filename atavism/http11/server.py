@@ -151,7 +151,7 @@ class HttpConnection(object):
                 self.logger.debug("Read %d bytes from accepted socket", len(data))
                 if len(data) == 0:
                     if resp is None or not resp.is_keepalive:
-                        self.logger.debug("Zero byte read, no keepa-live response, closing socket...")
+                        self.logger.debug("Zero byte read, keepalive not asked for, closing socket...")
                         break
 
                 self.inp += data
