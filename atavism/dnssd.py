@@ -6,6 +6,7 @@
 # RFC 6763 - DNS Service Discovery
 
 import ipaddress
+import logging
 import random
 import time
 import socket
@@ -393,9 +394,11 @@ class MDNSServiceDiscovery(object):
         self.timeout = 10
         self.devices = {}
         self.qtype = kwargs.get('qtype', QTYPE_ALL)
-
         self.interface = self.find_interfaces()
         self.query = MDNSQuery()
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.getLogger().level)
 
         for qname in args:
             self.query.add_question(qname.strip(), self.qtype)
@@ -437,6 +440,8 @@ class MDNSServiceDiscovery(object):
                 continue
 
             data, addr = sock.recvfrom(16384)
+            self.logger.debug("Received %d bytes from %s:%d", len(data), *addr)
+
             if data:
                 resp = MDNSResponse(data)
                 # We only want responses to our queries, not everyone elses!
@@ -449,21 +454,22 @@ class MDNSServiceDiscovery(object):
                 for a in resp.answers:
                     if 'PTR' not in a:
                         continue
-#                    print("A: {}", a)
 
+                    self.logger.debug("Answer: %s", a)
 
                     self.query.add_answer(a['qname'], a['PTR'], a['qtype'], a['qclass'], a['ttl'])
                     if a['PTR'] not in self.devices:
                         dev = {'PTR': a['PTR']}
-                        for ad in resp.additional\
-                                :
-#                            print("    ADD: {}".format(ad))
+                        for ad in resp.additional:
+                            self.logger.debug("Additional Record: %s", ad)
                             for poss in ('A', 'AAAA', 'TXT', 'SRV'):
                                 if poss in ad:
                                     dev[poss] = ad[poss]
+                        if 'A' not in dev:
+                            self.logger.info("No additional records found, so using origin IP for %s", a['PTR'])
+                            dev['A'] = addr[0]
                         self.devices[a['PTR']] = dev
 
-#        print(self.devices)
         sock.close()
 
         return len(self.devices) > 0
