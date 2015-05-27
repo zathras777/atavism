@@ -10,7 +10,7 @@ from atavism.chromecast import ChromecastClient
 from atavism.http11.client import HttpClient
 
 
-class AirplayDeviceError(Exception):
+class DeviceError(Exception):
     pass
 
 
@@ -48,6 +48,9 @@ class AirplayDevice:
 
         self.http = HttpClient(self.host, self.port)
 
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.getLogger().level)
+
         if self.ptr is not None:
             self.name = self.ptr.split('.')[0]
             self.get_info()
@@ -62,7 +65,7 @@ class AirplayDevice:
 
     def get_info(self):
         if self.host is None and self.host6 is None:
-            raise AirplayDeviceError("Unable to get device information as no IPv4 or IPv6 address available?")
+            raise DeviceError("Unable to get device information as no IPv4 or IPv6 address available?")
 
         self.info = self.http.simple_request('/server-info')
         if self.info is None:
@@ -105,20 +108,19 @@ class AirplayDevice:
         self.stop_video()
 
         pdata = {'Content-Location': video_srv.url, 'Start-Position': 0}
-        resp = self.http.post_data('/play', pdata, 'text/parameters')
+        resp = self.http.post_data('/play', data=pdata, ct='text/parameters')
         if resp is None or resp.code != 200:
-            raise AirplayDeviceError("Unable to play the video.")
+            self.logger.error("Unable to play the video. Code returned was %s", resp.code if resp is not None else None)
+            raise DeviceError("Unable to play video")
 
-        # need to pause to allow things to settle...
-        current, duration = self.get_position()
+        current, duration = -1, 0
         try:
-            sleep(self.UPDATE_INTERVAL)
-            while duration > 0 and current < duration:
-                current, duration = self.get_position()
+            while duration <= duration:
                 interval = show_progress(current, duration)
                 if interval == 0:
                     break
                 sleep(interval)
+                current, duration = self.get_position()
         except KeyboardInterrupt:
             print("\r\nStopping...")
 

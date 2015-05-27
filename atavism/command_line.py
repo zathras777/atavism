@@ -1,9 +1,9 @@
 import argparse
-from ipaddress import IPv4Address, ip_address
+from ipaddress import ip_address
 import logging
 import os
 import sys
-from atavism.devices import AirplayDevice, Chromecast
+from atavism.devices import AirplayDevice, Chromecast, DeviceError
 from atavism.dnssd import MDNSServiceDiscovery
 from atavism.http import HLSServer
 from atavism.video import find_ffmpeg, HLSVideo, SimpleVideo
@@ -65,6 +65,7 @@ def main():
                 sys.exit(0)
 
             for ptr in dev_src.devices:
+
                 if 'airplay' in ptr:
                     devices.append(AirplayDevice(dev_src.devices[ptr]))
                 elif 'googlecast' in ptr:
@@ -86,9 +87,27 @@ def main():
                 devices = [AirplayDevice({'A': ip_address(args.ip.decode())})]
 
         if len(devices) > 1:
+            for n in range(len(devices)):
+                print("    {}. {}".format(n + 1, devices[n]))
+
             print("\nAs more than one device was found, please enter the number of the device to use:")
-            print("\nHmm, maybe I should add this? :-)\n")
-            active_device = devices[0]
+            while True:
+                try:
+                    input = raw_input
+                except NameError:
+                    pass
+                num_str = input("Device to use (c to cancel): ")
+                if num_str.lower() == 'c':
+                    sys.exit(0)
+                try:
+                    num = int(num_str)
+                except ValueError:
+                    print("You need to enter a number!")
+                    continue
+                if 1 <= num <= len(devices):
+                    active_device = devices[num - 1]
+                    break
+                print("Number must be between 1 and {}".format(len(devices)))
         else:
             active_device = devices[0]
     else:
@@ -113,13 +132,17 @@ def main():
         video = SimpleVideo(args.video)
         print("    done")
 
+    print("Duration: {} seconds\n".format(video.info.get('duration')))
     srv = HLSServer(video=video)
     srv.start()
-    active_device.play_video(srv)
-    while srv.running:
-        try:
-            srv.join()
-        except KeyboardInterrupt:
-            print("command_line: keyboard interrupt")
-            break
+    try:
+        active_device.play_video(srv)
+        while srv.running:
+            try:
+                srv.join()
+            except KeyboardInterrupt:
+                print("command_line: keyboard interrupt")
+                break
+    except DeviceError as e:
+        print(e)
     srv.stop()
