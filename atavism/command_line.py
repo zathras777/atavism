@@ -7,7 +7,7 @@ from atavism.devices import AirplayDevice, Chromecast, DeviceError
 from atavism.dnssd import MDNSServiceDiscovery
 from atavism.http import HLSServer
 from atavism.video import find_ffmpeg, HLSVideo, SimpleVideo
-
+from atavism import __version__
 
 def main():
     parser = argparse.ArgumentParser(description='AppleTV Video Player')
@@ -22,10 +22,16 @@ def main():
     parser.add_argument('--hls-only', action='store_true', help='Just create an HLS stream')
     parser.add_argument('--chromecast', action='store_true', help='If an IP is supplied, is it for a Chromecast?')
     parser.add_argument('-v', nargs='*', help='Additional debug information')
+    parser.add_argument('--version', action='store_true', help='Show version and exit')
     parser.add_argument('--log', help='Logfile to save output into')
     parser.add_argument('video', nargs='?', help="Video to stream")
 
     args = parser.parse_args()
+
+    if args.version:
+        print("atavism,  version {}".format(__version__))
+        print("https://github.com/zathras777/atavism")
+        sys.exit(0)
 
     if args.video is None and args.find_devices is False:
         print("You must supply a video filename unless --find-devices is used.")
