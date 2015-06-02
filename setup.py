@@ -31,8 +31,11 @@ setup(
     keywords='appletv video ffmpeg streaming',
     packages=find_packages(exclude=['tests']),
     test_suite='tests',
+    install_requires=[
+        'ipaddress'
+    ],
     entry_points={
         'console_scripts': ['atavism=atavism.command_line:main']
     },
-    download_url = 'https://github.com/zathras777/atavism/tarball/0.1.1',
+    download_url='https://github.com/zathras777/atavism/tarball/0.2',
 )
